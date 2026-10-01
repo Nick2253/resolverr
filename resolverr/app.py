@@ -100,7 +100,7 @@ def webhook():
         return jsonify({"error": "no payload"}), 400
 
     notification_type = payload.get("notification_type", "")
-    if notification_type != "ISSUE_CREATED":
+    if notification_type not in ("ISSUE_CREATED", "ISSUE_REOPENED"):
         log.info("Ignoring notification type: %s", notification_type)
         return jsonify({"status": "ignored"})
 
