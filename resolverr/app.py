@@ -21,7 +21,19 @@ log = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-ISSUE_TYPE_MAP = {1: "video", 2: "audio", 3: "subtitles", 4: "other"}
+ISSUE_TYPE_MAP = {
+    1: "video", 2: "audio", 3: "subtitles", 4: "other",
+    "1": "video", "2": "audio", "3": "subtitles", "4": "other",
+    "VIDEO": "video", "AUDIO": "audio", "SUBTITLES": "subtitles",
+    "OTHER": "other",
+}
+
+
+def _issue_label(issue_type):
+    if issue_type is None:
+        return "unknown"
+    return ISSUE_TYPE_MAP.get(issue_type,
+           ISSUE_TYPE_MAP.get(str(issue_type).upper(), "unknown"))
 
 APPROVE_PAGE = """<!doctype html>
 <title>Resolverr — {{ job.media_title }}</title>
@@ -159,12 +171,12 @@ def webhook():
                 "Unknown file"
             seerr.comment_on_issue(
                 issue_id,
-                f"🔍 **Resolverr** — Issue received.\n\n"
-                f"- Media: **{title}**\n"
-                f"- File: `{file_display}`\n"
-                f"- Proposed: Blacklist release → delete file → search "
+                f"Resolverr — Issue received.\n\n"
+                f"Media: {title}\n"
+                f"File: {file_display}\n"
+                f"Action: Blacklist release, delete file, search "
                 f"replacement\n\n"
-                f"[**Review & Approve**]({approve_url})"
+                f"Review & Approve: {approve_url}"
             )
         except Exception:
             log.exception("Failed to comment on issue %d", issue_id)
@@ -183,8 +195,7 @@ def review(job_id):
 
     file_name = job["file_path"].split("/")[-1] if job["file_path"] else \
         "Unknown"
-    issue_label = ISSUE_TYPE_MAP.get(int(job["issue_type"]) if
-                                     job["issue_type"] else 4, "unknown")
+    issue_label = _issue_label(job["issue_type"])
     return render_template_string(APPROVE_PAGE, job=job, acted=False,
                                   file_name=file_name,
                                   issue_label=issue_label)
@@ -219,7 +230,7 @@ def reject(job_id):
         seerr = SeerrClient()
         seerr.comment_on_issue(
             job["seerr_issue_id"],
-            "⏭️ **Resolverr** — Admin declined automatic replacement. "
+            "Resolverr — Admin declined automatic replacement. "
             "This issue will be handled manually."
         )
     except Exception:

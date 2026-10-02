@@ -63,15 +63,15 @@ def _execute_movie_job(job, seerr):
         "No grab history found — could not blacklist release."
     seerr.comment_on_issue(
         job["seerr_issue_id"],
-        f"✅ **Resolverr** — Replacement initiated.\n\n"
-        f"- {bl_msg}\n"
-        f"- File deleted: `{movie_file['path'].split('/')[-1]}`\n"
-        f"- Search triggered for new release.\n\n"
+        f"Resolverr — Replacement initiated.\n\n"
+        f"{bl_msg}\n"
+        f"File deleted: {movie_file['path'].split('/')[-1]}\n"
+        f"Search triggered for new release.\n\n"
         f"The issue will remain open until a replacement is imported."
     )
 
     send_discord_notification(
-        f"🔄 **Resolverr** — Replacing **{job['media_title']}**\n"
+        f"Resolverr — Replacing {job['media_title']}\n"
         f"Issue: {ISSUE_TYPE_MAP.get(int(job['issue_type']), 'unknown')}\n"
         f"Reported by: {job['reporter']}"
     )
@@ -99,15 +99,15 @@ def _execute_tv_job(job, seerr):
 
     seerr.comment_on_issue(
         job["seerr_issue_id"],
-        f"✅ **Resolverr** — Replacement initiated.\n\n"
-        f"- {'Release blacklisted.' if blacklisted else 'No grab history — could not blacklist.'}\n"
-        f"- File deleted.\n"
-        f"- Search triggered for new release.\n\n"
+        f"Resolverr — Replacement initiated.\n\n"
+        f"{'Release blacklisted.' if blacklisted else 'No grab history — could not blacklist.'}\n"
+        f"File deleted.\n"
+        f"Search triggered for new release.\n\n"
         f"The issue will remain open until a replacement is imported."
     )
 
     send_discord_notification(
-        f"🔄 **Resolverr** — Replacing **{job['media_title']}**\n"
+        f"Resolverr — Replacing {job['media_title']}\n"
         f"Issue: {ISSUE_TYPE_MAP.get(int(job['issue_type']), 'unknown')}\n"
         f"Reported by: {job['reporter']}"
     )
@@ -118,7 +118,7 @@ def _comment_failure(job, error):
         seerr = SeerrClient()
         seerr.comment_on_issue(
             job["seerr_issue_id"],
-            f"❌ **Resolverr** — Failed to process.\n\nError: {error}\n\n"
+            f"Resolverr — Failed to process.\n\nError: {error}\n\n"
             f"An admin will need to handle this manually."
         )
     except Exception:
