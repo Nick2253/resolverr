@@ -30,11 +30,11 @@ class SeerrClient:
     def comment_on_issue(self, issue_id, message):
         self._post(f"/issue/{issue_id}/comment",
                    json={"message": message})
-        log.info("Commented on issue %d", issue_id)
+        log.info("Commented on issue %s", issue_id)
 
     def resolve_issue(self, issue_id):
         self._post(f"/issue/{issue_id}/resolved")
-        log.info("Resolved issue %d", issue_id)
+        log.info("Resolved issue %s", issue_id)
 
     def get_media(self, media_id):
         return self._get(f"/media/{media_id}")

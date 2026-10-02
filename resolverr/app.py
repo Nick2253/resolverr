@@ -111,9 +111,10 @@ def webhook():
     issue_id = issue.get("issue_id")
     if not issue_id:
         return jsonify({"error": "missing issue_id"}), 400
+    issue_id = int(issue_id)
 
     if get_job_by_issue(issue_id):
-        log.info("Duplicate webhook for issue %d — ignoring", issue_id)
+        log.info("Duplicate webhook for issue %s — ignoring", issue_id)
         return jsonify({"status": "duplicate"})
 
     media_type = media.get("media_type", "")
