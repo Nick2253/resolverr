@@ -12,7 +12,12 @@ from .notify import send_discord_notification
 
 log = logging.getLogger(__name__)
 
-ISSUE_TYPE_MAP = {1: "video", 2: "audio", 3: "subtitles", 4: "other"}
+ISSUE_TYPE_MAP = {
+    1: "video", 2: "audio", 3: "subtitles", 4: "other",
+    "1": "video", "2": "audio", "3": "subtitles", "4": "other",
+    "VIDEO": "video", "AUDIO": "audio", "SUBTITLES": "subtitles",
+    "OTHER": "other",
+}
 
 
 def process_approved_jobs():
@@ -72,7 +77,7 @@ def _execute_movie_job(job, seerr):
 
     send_discord_notification(
         f"Resolverr — Replacing {job['media_title']}\n"
-        f"Issue: {ISSUE_TYPE_MAP.get(int(job['issue_type']), 'unknown')}\n"
+        f"Issue: {ISSUE_TYPE_MAP.get(job['issue_type'], 'unknown')}\n"
         f"Reported by: {job['reporter']}"
     )
 
@@ -108,7 +113,7 @@ def _execute_tv_job(job, seerr):
 
     send_discord_notification(
         f"Resolverr — Replacing {job['media_title']}\n"
-        f"Issue: {ISSUE_TYPE_MAP.get(int(job['issue_type']), 'unknown')}\n"
+        f"Issue: {ISSUE_TYPE_MAP.get(job['issue_type'], 'unknown')}\n"
         f"Reported by: {job['reporter']}"
     )
 
