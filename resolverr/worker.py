@@ -7,6 +7,7 @@ from .db import (get_jobs_by_status, update_job_status, update_job_arr_info,
                  get_job, JobStatus)
 from .radarr import RadarrClient
 from .sonarr import SonarrClient
+from .bazarr import BazarrClient
 from .seerr import SeerrClient
 from .notify import send_discord_notification
 
@@ -18,6 +19,10 @@ ISSUE_TYPE_MAP = {
     "VIDEO": "video", "AUDIO": "audio", "SUBTITLES": "subtitles",
     "OTHER": "other",
 }
+
+
+def _issue_type(job):
+    return ISSUE_TYPE_MAP.get(job["issue_type"], "unknown")
 
 
 def process_approved_jobs():
@@ -33,13 +38,82 @@ def process_approved_jobs():
 
 def execute_job(job):
     seerr = SeerrClient()
+    issue_type = _issue_type(job)
 
-    if job["media_type"] == "movie":
+    if issue_type == "subtitles":
+        _execute_subtitle_job(job, seerr)
+    elif job["media_type"] == "movie":
         _execute_movie_job(job, seerr)
     elif job["media_type"] == "tv":
         _execute_tv_job(job, seerr)
     else:
         raise ValueError(f"Unknown media type: {job['media_type']}")
+
+
+def _execute_subtitle_job(job, seerr):
+    bazarr = BazarrClient()
+    metadata = _parse_metadata(job)
+
+    update_job_status(job["id"], JobStatus.DELETING)
+
+    if job["media_type"] == "movie":
+        subs = bazarr.get_movie_subtitles(job["arr_id"])
+        if subs:
+            movie = subs[0]
+            sub_files = movie.get("subtitles", [])
+            en_subs = [s for s in sub_files
+                       if s.get("code2") == "en" and s.get("path")]
+            for sub in en_subs:
+                bazarr.delete_movie_subtitle(
+                    job["arr_id"],
+                    language="en",
+                    forced="True" if sub.get("forced") else "False",
+                    hi="True" if sub.get("hi") else "False",
+                    path=sub["path"],
+                )
+
+        update_job_status(job["id"], JobStatus.SEARCHING)
+        bazarr.search_movie_subtitles(job["arr_id"])
+
+    elif job["media_type"] == "tv":
+        episode_id = metadata.get("episode_id")
+        series_id = job["arr_id"]
+        if not episode_id:
+            raise ValueError("Missing episode_id for TV subtitle job")
+
+        subs = bazarr.get_episode_subtitles(episode_id)
+        if subs:
+            episode = subs[0]
+            sub_files = episode.get("subtitles", [])
+            en_subs = [s for s in sub_files
+                       if s.get("code2") == "en" and s.get("path")]
+            for sub in en_subs:
+                bazarr.delete_episode_subtitle(
+                    sonarr_series_id=series_id,
+                    sonarr_episode_id=episode_id,
+                    language="en",
+                    forced="True" if sub.get("forced") else "False",
+                    hi="True" if sub.get("hi") else "False",
+                    path=sub["path"],
+                )
+
+        update_job_status(job["id"], JobStatus.SEARCHING)
+        bazarr.search_episode_subtitles(episode_id)
+
+    update_job_status(job["id"], JobStatus.COMPLETED)
+
+    seerr.comment_on_issue(
+        job["seerr_issue_id"],
+        f"Resolverr — Subtitle replacement initiated.\n\n"
+        f"Existing subtitles deleted.\n"
+        f"Search triggered for new subtitles.\n\n"
+        f"The issue will remain open until replacement subtitles are found."
+    )
+
+    send_discord_notification(
+        f"Resolverr — Replacing subtitles for {job['media_title']}\n"
+        f"Reported by: {job['reporter']}"
+    )
 
 
 def _execute_movie_job(job, seerr):
@@ -77,7 +151,7 @@ def _execute_movie_job(job, seerr):
 
     send_discord_notification(
         f"Resolverr — Replacing {job['media_title']}\n"
-        f"Issue: {ISSUE_TYPE_MAP.get(job['issue_type'], 'unknown')}\n"
+        f"Issue: {_issue_type(job)}\n"
         f"Reported by: {job['reporter']}"
     )
 
@@ -113,7 +187,7 @@ def _execute_tv_job(job, seerr):
 
     send_discord_notification(
         f"Resolverr — Replacing {job['media_title']}\n"
-        f"Issue: {ISSUE_TYPE_MAP.get(job['issue_type'], 'unknown')}\n"
+        f"Issue: {_issue_type(job)}\n"
         f"Reported by: {job['reporter']}"
     )
 

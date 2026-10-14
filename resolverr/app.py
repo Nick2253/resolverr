@@ -76,7 +76,7 @@ APPROVE_PAGE = """<!doctype html>
       <dt>File</dt>
       <dd>{{ file_name }}</dd>
       <dt>Action</dt>
-      <dd>Blacklist release, delete file, search for replacement</dd>
+      <dd>{{ action_desc }}</dd>
     </dl>
   </div>
   <div class="actions">
@@ -169,13 +169,18 @@ def webhook():
             seerr = SeerrClient()
             file_display = file_path.split("/")[-1] if file_path else \
                 "Unknown file"
+            issue_label = _issue_label(issue_type)
+            if issue_label == "subtitles":
+                action_desc = "Delete current subtitles, search for new ones"
+            else:
+                action_desc = "Blacklist release, delete file, search replacement"
             seerr.comment_on_issue(
                 issue_id,
                 f"Resolverr — Issue received.\n\n"
                 f"Media: {title}\n"
                 f"File: {file_display}\n"
-                f"Action: Blacklist release, delete file, search "
-                f"replacement\n\n"
+                f"Issue type: {issue_label}\n"
+                f"Action: {action_desc}\n\n"
                 f"Review & Approve: {approve_url}"
             )
         except Exception:
@@ -196,9 +201,14 @@ def review(job_id):
     file_name = job["file_path"].split("/")[-1] if job["file_path"] else \
         "Unknown"
     issue_label = _issue_label(job["issue_type"])
+    if issue_label == "subtitles":
+        action_desc = "Delete current subtitles, search for new ones"
+    else:
+        action_desc = "Blacklist release, delete file, search for replacement"
     return render_template_string(APPROVE_PAGE, job=job, acted=False,
                                   file_name=file_name,
-                                  issue_label=issue_label)
+                                  issue_label=issue_label,
+                                  action_desc=action_desc)
 
 
 @app.route("/approve/<job_id>", methods=["POST"])
