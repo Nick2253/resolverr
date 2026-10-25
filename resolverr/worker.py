@@ -54,64 +54,86 @@ def _execute_subtitle_job(job, seerr):
     bazarr = BazarrClient()
     metadata = _parse_metadata(job)
 
-    update_job_status(job["id"], JobStatus.DELETING)
-
     if job["media_type"] == "movie":
-        subs = bazarr.get_movie_subtitles(job["arr_id"])
-        if subs:
-            movie = subs[0]
-            sub_files = movie.get("subtitles", [])
-            en_subs = [s for s in sub_files
-                       if s.get("code2") == "en" and s.get("path")]
-            for sub in en_subs:
-                bazarr.delete_movie_subtitle(
-                    job["arr_id"],
-                    language="en",
-                    forced="True" if sub.get("forced") else "False",
-                    hi="True" if sub.get("hi") else "False",
-                    path=sub["path"],
-                )
-
-        update_job_status(job["id"], JobStatus.SEARCHING)
-        bazarr.search_movie_subtitles(job["arr_id"])
-
+        media_ids = {"radarrid": job["arr_id"]}
+        movie = bazarr.get_movie(job["arr_id"])
+        items = [(media_ids, movie)] if movie else []
+        scope = "movie"
     elif job["media_type"] == "tv":
-        episode_id = metadata.get("episode_id")
-        series_id = job["arr_id"]
-        if not episode_id:
-            raise ValueError("Missing episode_id for TV subtitle job")
+        media_ids = {"seriesid": job["arr_id"]}
+        episodes = bazarr.get_series_episodes(job["arr_id"])
+        # Seerr reports can name one episode, a whole season, or neither
+        if metadata.get("episode_id"):
+            episodes = [e for e in episodes
+                        if e.get("sonarrEpisodeId") == metadata["episode_id"]]
+            scope = f"S{metadata['season']:02d}E{metadata['episode']:02d}"
+        elif metadata.get("season"):
+            episodes = [e for e in episodes
+                        if e.get("season") == metadata["season"]]
+            scope = f"season {metadata['season']}"
+        else:
+            scope = "all episodes"
+        items = [({"seriesid": job["arr_id"],
+                   "episodeid": e["sonarrEpisodeId"]}, e) for e in episodes]
+    else:
+        raise ValueError(f"Unknown media type: {job['media_type']}")
 
-        subs = bazarr.get_episode_subtitles(episode_id)
-        if subs:
-            episode = subs[0]
-            sub_files = episode.get("subtitles", [])
-            en_subs = [s for s in sub_files
-                       if s.get("code2") == "en" and s.get("path")]
-            for sub in en_subs:
-                bazarr.delete_episode_subtitle(
-                    sonarr_series_id=series_id,
-                    sonarr_episode_id=episode_id,
+    if not items:
+        raise ValueError(f"Bazarr has no {scope} for {job['media_title']}")
+
+    update_job_status(job["id"], JobStatus.BLACKLISTING)
+    blacklisted, deleted = [], []
+    for ids, item in items:
+        for sub in item.get("subtitles", []):
+            # Embedded subtitles have no path; Bazarr can't remove those
+            if sub.get("code2") != "en" or not sub.get("path"):
+                continue
+            download = bazarr.find_download(ids, sub["path"])
+            if download:
+                bazarr.blacklist(ids, download)
+                blacklisted.append(download)
+            else:
+                # Not downloaded by Bazarr, so there's nothing to blacklist
+                update_job_status(job["id"], JobStatus.DELETING)
+                bazarr.delete_subtitle(
+                    ids,
                     language="en",
                     forced="True" if sub.get("forced") else "False",
                     hi="True" if sub.get("hi") else "False",
                     path=sub["path"],
                 )
+                deleted.append(sub["path"])
 
-        update_job_status(job["id"], JobStatus.SEARCHING)
-        bazarr.search_episode_subtitles(episode_id)
+    # Each blacklist already searches again; search for the rest ourselves
+    update_job_status(job["id"], JobStatus.SEARCHING)
+    if deleted or not blacklisted:
+        bazarr.search_missing(media_ids)
 
     update_job_status(job["id"], JobStatus.COMPLETED)
 
+    if blacklisted or deleted:
+        lines = []
+        if blacklisted:
+            providers = sorted({d["provider"] for d in blacklisted})
+            lines.append(f"Blacklisted {len(blacklisted)} subtitle(s) in "
+                         f"Bazarr ({', '.join(providers)}).")
+        if deleted:
+            lines.append(f"Deleted {len(deleted)} subtitle(s) Bazarr "
+                         f"didn't download.")
+        summary = "\n".join(lines)
+    else:
+        summary = "No English subtitles were present."
     seerr.comment_on_issue(
         job["seerr_issue_id"],
-        f"Resolverr — Subtitle replacement initiated.\n\n"
-        f"Existing subtitles deleted.\n"
-        f"Search triggered for new subtitles.\n\n"
+        f"Resolverr — Subtitle replacement initiated ({scope}).\n\n"
+        f"{summary}\n"
+        f"Bazarr is searching for new subtitles.\n\n"
         f"The issue will remain open until replacement subtitles are found."
     )
 
     send_discord_notification(
-        f"Resolverr — Replacing subtitles for {job['media_title']}\n"
+        f"Resolverr — Replacing subtitles for {job['media_title']} "
+        f"({scope})\n"
         f"Reported by: {job['reporter']}"
     )
 

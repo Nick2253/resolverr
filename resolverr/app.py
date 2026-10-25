@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import uuid
 
 from flask import Flask, request, jsonify, render_template_string
@@ -27,6 +28,10 @@ ISSUE_TYPE_MAP = {
     "VIDEO": "video", "AUDIO": "audio", "SUBTITLES": "subtitles",
     "OTHER": "other",
 }
+
+
+# Reporters often pick the wrong type ("video" for missing subtitles)
+SUBTITLE_WORDS = re.compile(r"\b(subtitles?|subs)\b", re.IGNORECASE)
 
 
 def _issue_label(issue_type):
@@ -136,8 +141,17 @@ def webhook():
 
     job_id = str(uuid.uuid4())[:8]
     issue_type = issue.get("issue_type", 4)
-    reporter = issue.get("reportedBy", {}).get("username",
-                issue.get("reportedBy", {}).get("displayName", "unknown"))
+    reporter = issue.get("reportedBy_username") or \
+        issue.get("reportedBy_email") or "unknown"
+
+    reclassified = False
+    if _issue_label(issue_type) != "subtitles" and \
+            _mentions_subtitles(issue_id, payload):
+        log.info("Issue #%d is filed as %s but mentions subtitles — "
+                 "treating it as a subtitle issue", issue_id,
+                 _issue_label(issue_type))
+        issue_type = "SUBTITLES"
+        reclassified = True
 
     title = _resolve_title(media, payload)
 
@@ -171,7 +185,7 @@ def webhook():
                 "Unknown file"
             issue_label = _issue_label(issue_type)
             if issue_label == "subtitles":
-                action_desc = "Delete current subtitles, search for new ones"
+                action_desc = "Blacklist current subtitles in Bazarr, search for new ones"
             else:
                 action_desc = "Blacklist release, delete file, search replacement"
             seerr.comment_on_issue(
@@ -179,7 +193,8 @@ def webhook():
                 f"Resolverr — Issue received.\n\n"
                 f"Media: {title}\n"
                 f"File: {file_display}\n"
-                f"Issue type: {issue_label}\n"
+                f"Issue type: {issue_label}"
+                f"{' (the report mentions subtitles)' if reclassified else ''}\n"
                 f"Action: {action_desc}\n\n"
                 f"Review & Approve: {approve_url}"
             )
@@ -202,7 +217,7 @@ def review(job_id):
         "Unknown"
     issue_label = _issue_label(job["issue_type"])
     if issue_label == "subtitles":
-        action_desc = "Delete current subtitles, search for new ones"
+        action_desc = "Blacklist current subtitles in Bazarr, search for new ones"
     else:
         action_desc = "Blacklist release, delete file, search for replacement"
     return render_template_string(APPROVE_PAGE, job=job, acted=False,
@@ -257,6 +272,19 @@ def list_jobs():
     return jsonify(jobs)
 
 
+def _mentions_subtitles(issue_id, payload):
+    """Whether the reporter's description talks about subtitles."""
+    text = payload.get("message") or ""
+    if not SUBTITLE_WORDS.search(text):
+        # The webhook template may not carry the description; ask Seerr
+        try:
+            comments = SeerrClient().get_issue(issue_id).get("comments") or []
+            text = comments[0].get("message", "") if comments else ""
+        except Exception:
+            log.exception("Failed to fetch issue %d from Seerr", issue_id)
+    return bool(SUBTITLE_WORDS.search(text))
+
+
 def _resolve_title(media, payload):
     if "subject" in payload and payload["subject"]:
         return payload["subject"]
@@ -290,8 +318,12 @@ def _lookup_arr_info(media_type, media, issue, extra):
             if not series:
                 return None, None, None, None, metadata
 
-            problem_season = issue.get("problemSeason", 0)
-            problem_episode = issue.get("problemEpisode", 0)
+            # Seerr puts these in "extra" and omits them when 0 (all)
+            affected = {e.get("name"): e.get("value") for e in extra or []}
+            problem_season = int(affected.get("Affected Season") or 0)
+            problem_episode = int(affected.get("Affected Episode") or 0)
+            if problem_season:
+                metadata["season"] = problem_season
 
             if problem_season and problem_episode:
                 episodes = sonarr.get_episodes(series["id"], problem_season)

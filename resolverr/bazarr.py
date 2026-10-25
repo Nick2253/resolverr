@@ -6,96 +6,99 @@ from .config import Config
 log = logging.getLogger(__name__)
 
 
+class BazarrError(Exception):
+    pass
+
+
 class BazarrClient:
+    """Same approach as Talkarr: a bad subtitle Bazarr downloaded goes through
+    Bazarr's blacklist (it deletes the file, records provider + subs_id as bad,
+    and searches again). Deleting the file alone lets Bazarr fetch the same
+    top-scoring subtitle straight back.
+
+    IDs are passed as {"radarrid": n} or {"seriesid": n, "episodeid": n}.
+    """
+
     def __init__(self):
         self.url = Config.BAZARR_URL.rstrip("/")
         self.api_key = Config.BAZARR_API_KEY
         self.session = requests.Session()
         self.session.headers["X-API-KEY"] = self.api_key
 
-    def _get(self, path, **kwargs):
-        resp = self.session.get(f"{self.url}/api{path}", **kwargs)
-        resp.raise_for_status()
-        return resp.json()
-
-    def _delete(self, path, **kwargs):
-        resp = self.session.delete(f"{self.url}/api{path}", **kwargs)
-        resp.raise_for_status()
+    def _request(self, method, path, **kwargs):
+        try:
+            resp = self.session.request(method, f"{self.url}/api{path}",
+                                        timeout=30, **kwargs)
+            resp.raise_for_status()
+        except requests.RequestException as e:
+            raise BazarrError(f"Bazarr {method} {path}: {e}") from e
         return resp.json() if resp.content else None
 
-    def _patch(self, path, json=None, **kwargs):
-        resp = self.session.patch(f"{self.url}/api{path}", json=json,
-                                  **kwargs)
-        resp.raise_for_status()
-        return resp.json() if resp.content else None
+    @staticmethod
+    def _data(payload):
+        return payload.get("data", []) if isinstance(payload, dict) else \
+            (payload or [])
 
-    def _post(self, path, json=None, **kwargs):
-        resp = self.session.post(f"{self.url}/api{path}", json=json,
-                                 **kwargs)
-        resp.raise_for_status()
-        return resp.json() if resp.content else None
+    @staticmethod
+    def _kind(ids):
+        return "movies" if "radarrid" in ids else "episodes"
 
-    def get_episode_subtitles(self, sonarr_episode_id):
-        data = self._get("/episodes",
-                         params={"episodeid[]": sonarr_episode_id})
-        return data.get("data", [])
+    def get_movie(self, radarr_id):
+        data = self._data(self._request("GET", "/movies",
+                                        params={"radarrid[]": radarr_id}))
+        return data[0] if data else None
 
-    def get_movie_subtitles(self, radarr_id):
-        data = self._get("/movies", params={"radarrid[]": radarr_id})
-        return data.get("data", [])
+    def get_series_episodes(self, sonarr_series_id):
+        return self._data(self._request(
+            "GET", "/episodes", params={"seriesid[]": sonarr_series_id}))
 
-    def delete_episode_subtitle(self, sonarr_series_id, sonarr_episode_id,
-                                language, forced, hi, path):
-        self._delete("/episodes/subtitles",
-                     params={
-                         "seriesid": sonarr_series_id,
-                         "episodeid": sonarr_episode_id,
-                         "language": language,
-                         "forced": forced,
-                         "hi": hi,
-                         "path": path,
-                     })
-        log.info("Deleted episode subtitle: %s", path)
+    def find_download(self, ids, subtitles_path):
+        """Bazarr's latest download record for this subtitle file, or None
+        (e.g. it was added by hand or Bazarr never downloaded it)."""
+        if "radarrid" in ids:
+            params = {"radarrid": ids["radarrid"], "length": -1}
+        else:
+            params = {"episodeid": ids["episodeid"], "length": -1}
+        rows = self._data(self._request("GET", f"/{self._kind(ids)}/history",
+                                        params=params))
+        # Bazarr returns history newest first
+        for row in rows:
+            if row.get("subtitles_path") != subtitles_path:
+                continue
+            if not (row.get("provider") and row.get("subs_id")) or \
+                    row.get("blacklisted"):
+                continue
+            language = row.get("language") or {}
+            code2 = language.get("code2") if isinstance(language, dict) \
+                else str(language)
+            return {"provider": row["provider"],
+                    "subs_id": str(row["subs_id"]),
+                    "language": code2 or "en",
+                    "subtitles_path": subtitles_path}
+        return None
 
-    def delete_movie_subtitle(self, radarr_id, language, forced, hi, path):
-        self._delete("/movies/subtitles",
-                     params={
-                         "radarrid": radarr_id,
-                         "language": language,
-                         "forced": forced,
-                         "hi": hi,
-                         "path": path,
-                     })
-        log.info("Deleted movie subtitle: %s", path)
+    def blacklist(self, ids, download):
+        """Blacklist a downloaded subtitle; Bazarr deletes it and searches
+        again for that item."""
+        self._request("POST", f"/{self._kind(ids)}/blacklist",
+                      data={**ids, **download})
+        log.info("Blacklisted in Bazarr: %s %s %s", download["provider"],
+                 download["subs_id"], download["subtitles_path"])
 
-    def search_episode_subtitles(self, sonarr_episode_id):
-        self._post("/episodes/subtitles",
-                   json={"episodeid": sonarr_episode_id})
-        log.info("Triggered subtitle search for episode %s",
-                 sonarr_episode_id)
+    def delete_subtitle(self, ids, language, forced, hi, path):
+        self._request("DELETE", f"/{self._kind(ids)}/subtitles",
+                      params={**ids, "language": language,
+                              "forced": forced, "hi": hi, "path": path})
+        log.info("Deleted subtitle: %s", path)
 
-    def search_movie_subtitles(self, radarr_id):
-        self._post("/movies/subtitles", json={"radarrid": radarr_id})
-        log.info("Triggered subtitle search for movie %s", radarr_id)
-
-    def blacklist_episode_subtitle(self, provider, subs_id,
-                                   language, forced):
-        self._post("/episodes/subtitles/blacklist",
-                   json={
-                       "provider": provider,
-                       "subs_id": subs_id,
-                       "language": language,
-                       "forced": forced,
-                   })
-        log.info("Blacklisted subtitle: %s/%s", provider, subs_id)
-
-    def blacklist_movie_subtitle(self, provider, subs_id,
-                                 language, forced):
-        self._post("/movies/subtitles/blacklist",
-                   json={
-                       "provider": provider,
-                       "subs_id": subs_id,
-                       "language": language,
-                       "forced": forced,
-                   })
-        log.info("Blacklisted movie subtitle: %s/%s", provider, subs_id)
+    def search_missing(self, ids):
+        """Search for every missing subtitle on the movie or whole series."""
+        if "radarrid" in ids:
+            self._request("PATCH", "/movies",
+                          params={"radarrid": ids["radarrid"],
+                                  "action": "search-missing"})
+        else:
+            self._request("PATCH", "/series",
+                          params={"seriesid": ids["seriesid"],
+                                  "action": "search-missing"})
+        log.info("Triggered missing-subtitle search: %s", ids)
