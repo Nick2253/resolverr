@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+import time
 import uuid
 
 from flask import Flask, request, jsonify, render_template_string
@@ -8,7 +9,7 @@ from flask import Flask, request, jsonify, render_template_string
 from .config import Config
 from .db import (init_db, create_job, get_job, get_job_by_issue,
                  update_job_status, update_job_arr_info, get_recent_jobs,
-                 get_jobs_by_status, JobStatus)
+                 get_jobs_by_status, get_other_jobs_for_media, JobStatus)
 from .radarr import RadarrClient
 from .sonarr import SonarrClient
 from .seerr import SeerrClient
@@ -167,18 +168,32 @@ def webhook():
 
     if metadata:
         from .db import get_db
-        import time
         with get_db() as db:
             db.execute("UPDATE jobs SET metadata = ?, updated_at = ? "
                        "WHERE id = ?",
                        (json.dumps(metadata), time.time(), job_id))
             db.commit()
 
-    if Config.AUTO_APPROVE:
+    # Repeat reports on the same media suggest the automatic fix didn't
+    # work (or something bigger is wrong), so a person has to look
+    hold_reason = None
+    since = time.time() - Config.AUTO_APPROVE_REPEAT_DAYS * 86400
+    recent = get_other_jobs_for_media(job_id, media_type, arr_id, title,
+                                      since) if Config.AUTO_APPROVE else []
+    if recent:
+        others = ", ".join(f"#{j['seerr_issue_id']}" for j in recent)
+        hold_reason = (f"Not auto-approved: {title} already had issue "
+                       f"{others} in the last "
+                       f"{Config.AUTO_APPROVE_REPEAT_DAYS} days.")
+
+    if Config.AUTO_APPROVE and not hold_reason:
         update_job_status(job_id, JobStatus.APPROVED)
         log.info("Auto-approved job %s", job_id)
     else:
+        if hold_reason:
+            log.info("Holding job %s for review: %s", job_id, hold_reason)
         approve_url = f"{Config.BASE_URL}/review/{job_id}"
+        nl = "\n"
         try:
             seerr = SeerrClient()
             file_display = file_path.split("/")[-1] if file_path else \
@@ -196,6 +211,7 @@ def webhook():
                 f"Issue type: {issue_label}"
                 f"{' (the report mentions subtitles)' if reclassified else ''}\n"
                 f"Action: {action_desc}\n\n"
+                f"{hold_reason + nl if hold_reason else ''}"
                 f"Review & Approve: {approve_url}"
             )
         except Exception:

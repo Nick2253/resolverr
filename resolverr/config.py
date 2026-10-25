@@ -14,4 +14,7 @@ class Config:
     DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
     DATABASE_PATH = os.environ.get("DATABASE_PATH", "/data/resolverr.db")
     AUTO_APPROVE = os.environ.get("AUTO_APPROVE", "false").lower() == "true"
+    # Never auto-approve a second issue on the same media within this window
+    AUTO_APPROVE_REPEAT_DAYS = int(os.environ.get("AUTO_APPROVE_REPEAT_DAYS",
+                                                  "14"))
     BASE_URL = os.environ.get("BASE_URL", "http://resolverr:8787")

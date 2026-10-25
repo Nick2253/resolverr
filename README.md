@@ -55,6 +55,7 @@ volumes:
 | `RESOLVERR_WEBHOOK_SECRET` | No | | Secret for authenticating Seerr webhooks |
 | `BASE_URL` | Yes | `http://resolverr:8787` | Public URL for approval links |
 | `AUTO_APPROVE` | No | `false` | Skip approval and act immediately |
+| `AUTO_APPROVE_REPEAT_DAYS` | No | `14` | Hold a report for approval if the same movie/series had another issue within this many days |
 | `DISCORD_WEBHOOK_URL` | No | | Discord webhook for notifications |
 | `DATABASE_PATH` | No | `/data/resolverr.db` | SQLite database location |
 
@@ -82,6 +83,8 @@ User reports issue in Seerr
 ### Auto Mode
 
 Set `AUTO_APPROVE=true` to skip the approval step. Resolverr will immediately blacklist, delete, and search when an issue is reported.
+
+As a safeguard, a report is never auto-approved when the same movie or series already had another issue within `AUTO_APPROVE_REPEAT_DAYS` (default 14). A repeat suggests the automatic fix didn't work, so Resolverr falls back to posting the approval link instead.
 
 ## API Endpoints
 

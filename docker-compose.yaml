@@ -14,7 +14,7 @@ services:
       - BAZARR_API_KEY=${BAZARR_API_KEY}
       - RESOLVERR_WEBHOOK_SECRET=${RESOLVERR_WEBHOOK_SECRET}
       - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL:-}
-      - AUTO_APPROVE=false
+      - AUTO_APPROVE=true
       - BASE_URL=https://resolverr.nkcx.net
       - DATABASE_PATH=/data/resolverr.db
     volumes:

@@ -117,6 +117,23 @@ def get_job_by_issue(seerr_issue_id):
         return dict(row) if row else None
 
 
+def get_other_jobs_for_media(job_id, media_type, arr_id, media_title, since):
+    """Other jobs on the same movie/series created at or after `since`.
+    Falls back to matching on title when the *arr lookup failed."""
+    if arr_id is not None:
+        where, key = "arr_id = ?", arr_id
+    else:
+        where, key = "arr_id IS NULL AND media_title = ?", media_title
+    with get_db() as db:
+        rows = db.execute(
+            f"""SELECT * FROM jobs WHERE id != ? AND media_type = ?
+                AND {where} AND created_at >= ?
+                ORDER BY created_at DESC""",
+            (job_id, media_type, key, since)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
 def get_jobs_by_status(status):
     with get_db() as db:
         rows = db.execute(
